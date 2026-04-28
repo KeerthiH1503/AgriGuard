@@ -90,7 +90,7 @@ VITE_GEMINI_API_KEY=your_gemini_key
 VITE_WEATHER_API_KEY=your_weatherapi_key
 ```
 
-Then open [http://localhost:5173](http://localhost:5173) in your browser.
+
 
 ---
 
