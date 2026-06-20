@@ -1470,13 +1470,17 @@ function AIFarmAdvisor() {
 
             if (!nimRes.ok) throw new Error(`NIM API error: ${await nimRes.text()}`);
             const nimData = await nimRes.json();
-            console.log('NIM full response:', JSON.stringify(nimData));
-const finalAnswer = nimData.choices?.[0]?.message?.content 
-    || nimData.choices?.[0]?.text 
-    || nimData.content 
+           console.log('NIM full response:', JSON.stringify(nimData));
+const choice = nimData.choices?.[0];
+const finalAnswer = choice?.message?.content 
+    || choice?.delta?.content
+    || choice?.text 
     || '';
-            if (finalAnswer) { setResponse(finalAnswer); }
-            else { setError(new Error("No response from NVIDIA NIM.")); }
+if (finalAnswer) { 
+    setResponse(finalAnswer); 
+} else { 
+    setError(new Error("No response from NVIDIA NIM. Raw: " + JSON.stringify(nimData).substring(0, 200))); 
+}
 
         } catch (err) {
             console.error("Advisor error:", err);
