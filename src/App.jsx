@@ -1349,7 +1349,7 @@ function SettingsPage({ handleLogout }) {
     );
 }
 
-// AI Farm Advisor Component — NVIDIA NIM Nemotron + 4 Agents + Voice Input
+// AI Farm Advisor Component — NVIDIA NIM Nemotron + 4 Agents + Voice Input + Photo
 function AIFarmAdvisor() {
     const { t } = useContext(AppContext);
     const [query, setQuery] = useState('');
@@ -1359,7 +1359,27 @@ function AIFarmAdvisor() {
     const [isListening, setIsListening] = useState(false);
     const [voiceSupported] = useState(() => 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
     const [agentOutputs, setAgentOutputs] = useState(null);
+    const [uploadedImage, setUploadedImage] = useState(null);
+    const [uploadedImageBase64, setUploadedImageBase64] = useState(null);
     const recognitionRef = useRef(null);
+    const fileInputRef = useRef(null);
+
+    const handleImageUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            setUploadedImage(ev.target.result);
+            setUploadedImageBase64(ev.target.result.split(',')[1]);
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const removeImage = () => {
+        setUploadedImage(null);
+        setUploadedImageBase64(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
 
     const startVoiceInput = () => {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1392,20 +1412,35 @@ function AIFarmAdvisor() {
 
         try {
             const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
-         
+            const delay = (ms) => new Promise(r => setTimeout(r, ms));
 
-            // Agent 1: Disease
+            const geminiCall = async (parts) => {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ role: "user", parts }] })
+                });
+                const data = await res.json();
+                if (data.error?.code === 429) throw new Error('rate_limit');
+                return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            };
+
+            // Agent 1: Disease — supports image
             let diseaseInfo = '';
             try {
-                const d = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: `A farmer asks: "${query}". Extract only crop disease or plant health aspects. Provide 2-sentence assessment. If not relevant, say "No disease concern identified."` }] }] })
-                });
-                const dData = await d.json();
-                diseaseInfo = dData.candidates?.[0]?.content?.parts?.[0]?.text || 'No disease data.';
-            } catch (e) { diseaseInfo = 'Disease agent unavailable.'; }
+                const parts = uploadedImageBase64
+                    ? [
+                        { inline_data: { mime_type: 'image/jpeg', data: uploadedImageBase64 } },
+                        { text: `This farmer uploaded a crop photo and asks: "${query || 'What disease or issue do you see?'}". Identify any visible disease, pest, or health issue. Give a 2-sentence assessment with the problem name and severity.` }
+                      ]
+                    : [{ text: `A farmer asks: "${query}". Extract only crop disease or plant health aspects. 2-sentence assessment. If not relevant, say "No disease concern identified."` }];
+                diseaseInfo = await geminiCall(parts) || 'No disease concern identified.';
+            } catch (e) {
+                diseaseInfo = e.message === 'rate_limit' ? 'Rate limit hit — try again in 30s.' : 'Disease agent unavailable.';
+            }
 
-            // Agent 2: Weather
+            await delay(1000);
+
+            // Agent 2: Weather (no Gemini needed)
             let weatherInfo = '';
             try {
                 const weatherKey = import.meta.env.VITE_WEATHER_API_KEY;
@@ -1418,67 +1453,63 @@ function AIFarmAdvisor() {
                 } else { weatherInfo = 'Weather data unavailable.'; }
             } catch (e) { weatherInfo = 'Weather agent unavailable.'; }
 
-            // Agent 3: Market
+            await delay(1000);
+
+            // Agent 3: Market — extract crop then fetch AGMARKNET
             let marketInfo = '';
             try {
                 const agmarknetKey = import.meta.env.VITE_AGMARKNET_API_KEY;
-                const cpRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: `From this farmer query: "${query}", extract only the crop name as a single word. Return just the crop name, nothing else.` }] }] })
-                });
-                const cpData = await cpRes.json();
-                const extractedCrop = cpData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-                if (extractedCrop && extractedCrop.length < 20) {
-                    const mRes = await fetch(`https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?api-key=${agmarknetKey}&format=json&filters[commodity]=${encodeURIComponent(extractedCrop)}&limit=3`);
+                // Extract crop name with Gemini
+                const extractedCrop = await geminiCall([{ text: `From this text: "${query}", extract the crop/vegetable/fruit name as a single English word with first letter capitalized (e.g. Tomato, Wheat, Onion, Rice). Return ONLY the crop name, nothing else.` }]);
+                const cropName = extractedCrop?.trim().split('\n')[0] || '';
+                if (cropName && cropName.length < 20) {
+                    const mRes = await fetch(`https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?api-key=${agmarknetKey}&format=json&filters[commodity]=${encodeURIComponent(cropName)}&limit=5`);
                     if (mRes.ok) {
                         const mData = await mRes.json();
                         if (mData.records?.length > 0) {
-                            marketInfo = mData.records.map(r => `${r.market}: Modal ₹${r.modal_price}/quintal`).join(', ');
+                            marketInfo = `${cropName} prices — ` + mData.records.map(r => `${r.market}: ₹${r.modal_price}/quintal`).join(', ');
                         }
                     }
                 }
-                if (!marketInfo) marketInfo = 'Live mandi data unavailable for this crop.';
-            } catch (e) { marketInfo = 'Market agent unavailable.'; }
+                if (!marketInfo) marketInfo = 'Live mandi data unavailable. Check agmarknet.gov.in for current prices.';
+            } catch (e) {
+                marketInfo = e.message === 'rate_limit' ? 'Rate limit hit — try again in 30s.' : 'Market agent unavailable.';
+            }
+
+            await delay(1000);
 
             // Agent 4: Schemes
             let schemesInfo = '';
             try {
-                const sRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: `A farmer asks: "${query}". Which of these govt schemes is relevant: PM-KISAN, PMFBY, KCC, PM-KUSUM, e-NAM? List only relevant scheme names and one-line benefit. If none, say "No specific scheme applies."` }] }] })
-                });
-                const sData = await sRes.json();
-                schemesInfo = sData.candidates?.[0]?.content?.parts?.[0]?.text || 'No schemes data.';
-            } catch (e) { schemesInfo = 'Schemes agent unavailable.'; }
+                schemesInfo = await geminiCall([{ text: `A farmer asks: "${query}". Which govt schemes apply: PM-KISAN (₹6000/yr income), PMFBY (crop insurance), KCC (credit), PM-KUSUM (solar pump), e-NAM (online mandi)? List relevant ones with one-line benefit. If none, say "No specific scheme applies."` }]) || 'No schemes data.';
+            } catch (e) {
+                schemesInfo = e.message === 'rate_limit' ? 'Rate limit hit — try again in 30s.' : 'Schemes agent unavailable.';
+            }
 
             setAgentOutputs({ diseaseInfo, weatherInfo, marketInfo, schemesInfo });
 
             // Agent 5: NVIDIA NIM Nemotron — Synthesis
+            const imageContext = uploadedImageBase64 ? ' (Farmer also uploaded a crop photo for disease analysis.)' : '';
             const nimRes = await fetch('/api/nim-proxy', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    model: 'nvidia/llama-3.1-nemotron-70b-instruct',
                     messages: [{
                         role: 'user',
-                        content: `You are AgriGuard AI Farm Advisor powered by NVIDIA Nemotron. A farmer asked: "${query}"\n\nInputs from 4 agents:\nDISEASE AGENT: ${diseaseInfo}\nWEATHER AGENT: ${weatherInfo}\nMARKET AGENT: ${marketInfo}\nSCHEMES AGENT: ${schemesInfo}\n\nSynthesize into ONE clear response:\n1. Direct answer\n2. Key recommendation (what to do right now)\n3. Best opportunity or warning\n\nUnder 150 words. Simple, practical farming advisor tone.`
-                    }],
-                    max_tokens: 300,
-                    temperature: 0.6
+                        content: `You are AgriGuard AI Farm Advisor powered by NVIDIA Nemotron. A farmer asked: "${query}"${imageContext}\n\nInputs from 4 agents:\nDISEASE AGENT: ${diseaseInfo}\nWEATHER AGENT: ${weatherInfo}\nMARKET AGENT: ${marketInfo}\nSCHEMES AGENT: ${schemesInfo}\n\nSynthesize into ONE clear response:\n1. Direct answer\n2. Key recommendation (what to do right now)\n3. Best opportunity or warning\n\nUnder 150 words. Simple, practical farming advisor tone.`
+                    }]
                 })
             });
 
             if (!nimRes.ok) throw new Error(`NIM API error: ${await nimRes.text()}`);
             const nimData = await nimRes.json();
-          const finalAnswer = nimData._extracted 
-    || nimData.choices?.[0]?.message?.content 
-    || nimData.choices?.[0]?.message?.reasoning_content
-    || '';
-if (finalAnswer) { 
-    setResponse(finalAnswer); 
-} else { 
-    setError(new Error("No response from NVIDIA NIM. Raw: " + JSON.stringify(nimData).substring(0, 200))); 
-}
+            const finalAnswer = nimData._extracted
+                || nimData.choices?.[0]?.message?.content
+                || nimData.choices?.[0]?.message?.reasoning_content
+                || '';
+            if (finalAnswer) { setResponse(finalAnswer); }
+            else { setError(new Error("No response from NVIDIA NIM. Raw: " + JSON.stringify(nimData).substring(0, 200))); }
+
         } catch (err) {
             console.error("Advisor error:", err);
             setError(new Error("Advisor failed: " + err.message));
@@ -1527,6 +1558,27 @@ if (finalAnswer) {
                     )}
                 </div>
                 {isListening && <p className="text-red-500 text-sm text-center animate-pulse">🎤 Listening... speak now</p>}
+
+                {/* Photo Upload */}
+                <div className="flex items-center space-x-3">
+                    <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageUpload} className="hidden" />
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex items-center space-x-2 px-4 py-2 border-2 border-dashed border-purple-300 rounded-lg text-purple-600 hover:border-purple-500 hover:bg-purple-50 transition-colors text-sm"
+                    >
+                        <Camera size={18} />
+                        <span>{uploadedImage ? 'Change Photo' : 'Upload Crop Photo (optional)'}</span>
+                    </button>
+                    {uploadedImage && (
+                        <div className="relative">
+                            <img src={uploadedImage} alt="Crop" className="h-16 w-16 object-cover rounded-lg border-2 border-purple-300" />
+                            <button onClick={removeImage} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5">
+                                <XCircle size={16} />
+                            </button>
+                        </div>
+                    )}
+                </div>
+
                 <button
                     onClick={handleAdvisorQuery}
                     disabled={loading}
