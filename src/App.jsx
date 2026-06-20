@@ -1424,7 +1424,7 @@ function AIFarmAdvisor() {
                 return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
             };
 
-            // Agent 1: Disease — supports image
+            // Agent 1: Disease — supports image (separate call only if image uploaded)
             let diseaseInfo = '';
             try {
                 const parts = uploadedImageBase64
@@ -1432,20 +1432,55 @@ function AIFarmAdvisor() {
                         { inline_data: { mime_type: 'image/jpeg', data: uploadedImageBase64 } },
                         { text: `This farmer uploaded a crop photo and asks: "${query || 'What disease or issue do you see?'}". Identify any visible disease, pest, or health issue. Give a 2-sentence assessment with the problem name and severity.` }
                       ]
-                    : [{ text: `A farmer asks: "${query}". Extract only crop disease or plant health aspects. 2-sentence assessment. If not relevant, say "No disease concern identified."` }];
-                diseaseInfo = await geminiCall(parts) || 'No disease concern identified.';
+                    : null;
+                if (parts) {
+                    diseaseInfo = await geminiCall(parts) || 'No disease concern identified.';
+                    await delay(2000);
+                }
             } catch (e) {
                 diseaseInfo = e.message === 'rate_limit' ? 'Rate limit hit — try again in 30s.' : 'Disease agent unavailable.';
             }
 
-            await delay(1000);
-
-            // Agent 2: Weather (no Gemini needed)
+            // Agent 2: Weather (no Gemini needed — runs in parallel)
             let weatherInfo = '';
+            const weatherKey = import.meta.env.VITE_WEATHER_API_KEY;
+            const locationMatch = query.match(/in\s+([A-Za-z\s]+)/i);
+            const location = locationMatch ? locationMatch[1].trim() : 'Karnataka';
+
+            // SINGLE Gemini call — handles Disease (text), Crop extraction, AND Schemes together
+            let schemesInfo = '';
+            let cropName = '';
             try {
-                const weatherKey = import.meta.env.VITE_WEATHER_API_KEY;
-                const locationMatch = query.match(/in\s+([A-Za-z\s]+)/i);
-                const location = locationMatch ? locationMatch[1].trim() : 'Karnataka';
+                const combinedPrompt = `A farmer asks: "${query}"
+
+Answer these 3 questions in this EXACT format with these EXACT labels:
+
+DISEASE: [2-sentence crop disease/health assessment based on the query. If no disease mentioned, say "No disease concern identified."]
+
+CROP: [Single crop/vegetable/fruit name from the query with first letter capitalized, e.g. Tomato, Wheat, Onion. If no crop mentioned, say "Unknown".]
+
+SCHEMES: [List relevant govt schemes from: PM-KISAN (₹6000/yr), PMFBY (crop insurance), KCC (credit), PM-KUSUM (solar pump), e-NAM (online mandi). One line each. If none relevant, say "No specific scheme applies."]`;
+
+                const combined = await geminiCall([{ text: combinedPrompt }]);
+
+                // Parse the response
+                const diseaseMatch = combined.match(/DISEASE:\s*(.+?)(?=\nCROP:|$)/s);
+                const cropMatch = combined.match(/CROP:\s*(.+?)(?=\nSCHEMES:|$)/s);
+                const schemesMatch = combined.match(/SCHEMES:\s*(.+?)$/s);
+
+                if (!uploadedImageBase64) {
+                    diseaseInfo = diseaseMatch?.[1]?.trim() || 'No disease concern identified.';
+                }
+                cropName = cropMatch?.[1]?.trim().split('\n')[0] || '';
+                schemesInfo = schemesMatch?.[1]?.trim() || 'No schemes data.';
+
+            } catch (e) {
+                if (!uploadedImageBase64) diseaseInfo = e.message === 'rate_limit' ? 'Rate limit — retry in 30s.' : 'Disease agent unavailable.';
+                schemesInfo = e.message === 'rate_limit' ? 'Rate limit — retry in 30s.' : 'Schemes agent unavailable.';
+            }
+
+            // Agent 2: Weather fetch (no Gemini)
+            try {
                 const wRes = await fetch(`https://api.weatherapi.com/v1/forecast.json?key=${weatherKey}&q=${location}&days=3&aqi=no&alerts=no`);
                 if (wRes.ok) {
                     const wData = await wRes.json();
@@ -1453,16 +1488,13 @@ function AIFarmAdvisor() {
                 } else { weatherInfo = 'Weather data unavailable.'; }
             } catch (e) { weatherInfo = 'Weather agent unavailable.'; }
 
-            await delay(1000);
+            await delay(2000);
 
-            // Agent 3: Market — extract crop then fetch AGMARKNET
+            // Agent 3: Market — use crop name from combined call, fetch AGMARKNET
             let marketInfo = '';
             try {
                 const agmarknetKey = import.meta.env.VITE_AGMARKNET_API_KEY;
-                // Extract crop name with Gemini
-                const extractedCrop = await geminiCall([{ text: `From this text: "${query}", extract the crop/vegetable/fruit name as a single English word with first letter capitalized (e.g. Tomato, Wheat, Onion, Rice). Return ONLY the crop name, nothing else.` }]);
-                const cropName = extractedCrop?.trim().split('\n')[0] || '';
-                if (cropName && cropName.length < 20) {
+                if (cropName && cropName !== 'Unknown' && cropName.length < 20) {
                     const mRes = await fetch(`https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?api-key=${agmarknetKey}&format=json&filters[commodity]=${encodeURIComponent(cropName)}&limit=5`);
                     if (mRes.ok) {
                         const mData = await mRes.json();
@@ -1472,19 +1504,7 @@ function AIFarmAdvisor() {
                     }
                 }
                 if (!marketInfo) marketInfo = 'Live mandi data unavailable. Check agmarknet.gov.in for current prices.';
-            } catch (e) {
-                marketInfo = e.message === 'rate_limit' ? 'Rate limit hit — try again in 30s.' : 'Market agent unavailable.';
-            }
-
-            await delay(1000);
-
-            // Agent 4: Schemes
-            let schemesInfo = '';
-            try {
-                schemesInfo = await geminiCall([{ text: `A farmer asks: "${query}". Which govt schemes apply: PM-KISAN (₹6000/yr income), PMFBY (crop insurance), KCC (credit), PM-KUSUM (solar pump), e-NAM (online mandi)? List relevant ones with one-line benefit. If none, say "No specific scheme applies."` }]) || 'No schemes data.';
-            } catch (e) {
-                schemesInfo = e.message === 'rate_limit' ? 'Rate limit hit — try again in 30s.' : 'Schemes agent unavailable.';
-            }
+            } catch (e) { marketInfo = 'Market agent unavailable.'; }
 
             setAgentOutputs({ diseaseInfo, weatherInfo, marketInfo, schemesInfo });
 
