@@ -7,7 +7,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, 
 import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 
 // --- ICON IMPORTS ---
-import { Home, Scan, TrendingUp, BookOpen, Settings, LogOut, User, Send, Users, Phone, Award, Camera, XCircle, Sun, Cloud, Droplets, Wind, ExternalLink, ShieldCheck, Search, Languages } from 'lucide-react';
+import { Home, Scan, TrendingUp, BookOpen, Settings, LogOut, User, Send, Users, Phone, Award, Camera, XCircle, Sun, Cloud, Droplets, Wind, ExternalLink, ShieldCheck, Search, Languages, Brain, Mic } from 'lucide-react';
 
 // Load Tailwind CSS script via CDN for quick local styling
 const tailwindScriptId = 'tailwind-cdn-script';
@@ -254,6 +254,7 @@ function App() {
                             {currentPage === 'marketTracker' && <MarketTracker />}
                             {currentPage === 'farmingGuide' && <FarmingGuide />}
                             {currentPage === 'govSchemes' && <GovSchemes />}
+                            {currentPage === 'advisor' && <AIFarmAdvisor />}
                             {currentPage === 'settings' && <SettingsPage handleLogout={handleLogout} />}
                         </main>
                     </>
@@ -277,6 +278,7 @@ function Header({ setCurrentPage }) {
                 <NavItem icon={<TrendingUp size={20} />} text={t('marketTracker')} onClick={() => setCurrentPage('marketTracker')} />
                 <NavItem icon={<BookOpen size={20} />} text={t('farmingGuide')} onClick={() => setCurrentPage('farmingGuide')} />
                 <NavItem icon={<ShieldCheck size={20} />} text={t('govSchemes')} onClick={() => setCurrentPage('govSchemes')} />
+                <NavItem icon={<Brain size={20} />} text="AI Advisor" onClick={() => setCurrentPage('advisor')} highlight />
                 <NavItem icon={<Settings size={20} />} text={t('settings')} onClick={() => setCurrentPage('settings')} />
             </nav>
         </header>
@@ -284,10 +286,10 @@ function Header({ setCurrentPage }) {
 }
 
 // Navigation Item Component
-function NavItem({ icon, text, onClick }) {
+function NavItem({ icon, text, onClick, highlight }) {
     return (
         <button
-            className="flex items-center space-x-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-md transition-colors duration-200 text-sm font-medium shadow-sm"
+            className={`flex items-center space-x-1 px-3 py-2 rounded-md transition-colors duration-200 text-sm font-medium shadow-sm ${highlight ? 'bg-purple-600 hover:bg-purple-500' : 'bg-emerald-600 hover:bg-emerald-500'} text-white`}
             onClick={onClick}
         >
             {icon}
@@ -1027,11 +1029,12 @@ function DiseaseDetector() {
     );
 }
 
-// Market Tracker Component
+// Market Tracker Component — Real AGMARKNET prices + Gemini analysis
 function MarketTracker() {
     const { t } = useContext(AppContext);
     const [cropName, setCropName] = useState('');
     const [region, setRegion] = useState('');
+    const [mandiData, setMandiData] = useState([]);
     const [marketAnalysis, setMarketAnalysis] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -1042,16 +1045,41 @@ function MarketTracker() {
             return;
         }
         setLoading(true);
+        setMandiData([]);
         setMarketAnalysis('');
         setError(null);
 
         try {
-            const prompt = `Provide a market insights analysis for ${cropName} in the ${region} region. Structure the response with a brief summary, followed by bullet points for 'Price Trends' and 'Key Factors'. Keep the entire response concise.`;
-            const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+            // Step 1: Fetch live mandi prices from data.gov.in AGMARKNET API
+            const agmarknetKey = import.meta.env.VITE_AGMARKNET_API_KEY;
+            const agmarknetUrl = `https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?api-key=${agmarknetKey}&format=json&filters[commodity]=${encodeURIComponent(cropName)}&filters[state]=${encodeURIComponent(region)}&limit=10`;
 
-            const response = await fetchWithRetry(apiUrl, {
+            let livePriceText = '';
+            try {
+                const agmarknetRes = await fetch(agmarknetUrl);
+                if (agmarknetRes.ok) {
+                    const agmarknetData = await agmarknetRes.json();
+                    if (agmarknetData.records && agmarknetData.records.length > 0) {
+                        setMandiData(agmarknetData.records);
+                        livePriceText = agmarknetData.records.map(r =>
+                            `Mandi: ${r.market}, Min: ₹${r.min_price}/quintal, Max: ₹${r.max_price}/quintal, Modal: ₹${r.modal_price}/quintal, Date: ${r.arrival_date}`
+                        ).join('\n');
+                    }
+                }
+            } catch (agErr) {
+                console.warn('AGMARKNET fetch failed, continuing with AI analysis only:', agErr);
+            }
+
+            // Step 2: Send live prices + context to Gemini for analysis
+            const prompt = livePriceText
+                ? `Here are live mandi prices for ${cropName} in ${region} from AGMARKNET:\n${livePriceText}\n\nBased on these real prices, provide a brief market analysis with: 1) Price summary, 2) Price trend insight, 3) Selling recommendation for the farmer. Keep it concise and practical.`
+                : `Provide a market insights analysis for ${cropName} in ${region}. Include price trends, key factors affecting price, and a selling recommendation. Note that live mandi data was unavailable, so provide general market guidance.`;
+
+            const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+            const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`;
+
+            const response = await fetchWithRetry(geminiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -1066,7 +1094,7 @@ function MarketTracker() {
             }
         } catch (err) {
             console.error("Error analyzing market:", err);
-            setError(new Error("Failed to get AI market analysis. Please try again."));
+            setError(new Error("Failed to get market data. Please try again."));
         } finally {
             setLoading(false);
         }
@@ -1074,20 +1102,57 @@ function MarketTracker() {
 
     return (
         <div className="bg-white p-6 rounded-lg shadow-md border border-emerald-200">
-            <h2 className="text-3xl font-bold text-emerald-700 mb-6 flex items-center space-x-2">
+            <h2 className="text-3xl font-bold text-emerald-700 mb-2 flex items-center space-x-2">
                 <TrendingUp size={28} />
                 <span>{t('marketTracker')}</span>
             </h2>
+            <p className="text-sm text-gray-500 mb-6">Live mandi prices from AGMARKNET + AI analysis</p>
             <div className="flex flex-col space-y-4 mb-6">
-                <input type="text" placeholder={t('cropName')} value={cropName} onChange={(e) => setCropName(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg shadow-sm" />
-                <input type="text" placeholder={t('region')} value={region} onChange={(e) => setRegion(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg shadow-sm" />
-                <button onClick={handleAnalyzeMarket} disabled={loading} className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50">{loading ? t('loading') : t('analyzeMarket')}</button>
+                <input type="text" placeholder="Crop name (e.g. Tomato, Wheat, Onion)" value={cropName} onChange={(e) => setCropName(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg shadow-sm" />
+                <input type="text" placeholder="State (e.g. Karnataka, Maharashtra)" value={region} onChange={(e) => setRegion(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg shadow-sm" />
+                <button onClick={handleAnalyzeMarket} disabled={loading} className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50">
+                    {loading ? t('loading') : 'Get Live Prices + Analysis'}
+                </button>
             </div>
             {loading && <p className="text-center text-emerald-700">{t('loading')}</p>}
             {error && <p className="text-center text-red-600">{t('error')} {error.message}</p>}
+
+            {mandiData.length > 0 && (
+                <div className="mt-6 mb-4">
+                    <h4 className="text-lg font-semibold text-emerald-700 mb-3">Live Mandi Prices (AGMARKNET)</h4>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm border-collapse">
+                            <thead>
+                                <tr className="bg-emerald-100 text-emerald-800">
+                                    <th className="p-2 text-left border border-emerald-200">Market</th>
+                                    <th className="p-2 text-left border border-emerald-200">District</th>
+                                    <th className="p-2 text-right border border-emerald-200">Min ₹</th>
+                                    <th className="p-2 text-right border border-emerald-200">Max ₹</th>
+                                    <th className="p-2 text-right border border-emerald-200">Modal ₹</th>
+                                    <th className="p-2 text-left border border-emerald-200">Date</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {mandiData.map((row, i) => (
+                                    <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-emerald-50'}>
+                                        <td className="p-2 border border-emerald-100">{row.market}</td>
+                                        <td className="p-2 border border-emerald-100">{row.district}</td>
+                                        <td className="p-2 border border-emerald-100 text-right">₹{row.min_price}</td>
+                                        <td className="p-2 border border-emerald-100 text-right">₹{row.max_price}</td>
+                                        <td className="p-2 border border-emerald-100 text-right font-semibold text-emerald-700">₹{row.modal_price}</td>
+                                        <td className="p-2 border border-emerald-100">{row.arrival_date}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                        <p className="text-xs text-gray-400 mt-1">Prices per quintal (100 kg)</p>
+                    </div>
+                </div>
+            )}
+
             {marketAnalysis && (
-                <div className="bg-emerald-50 p-6 rounded-lg mt-6">
-                    <h4 className="text-xl font-semibold text-emerald-600 mb-2">{t('marketAnalysisResult')}</h4>
+                <div className="bg-emerald-50 p-6 rounded-lg mt-2">
+                    <h4 className="text-xl font-semibold text-emerald-600 mb-2">AI Market Analysis</h4>
                     <TranslatableText text={marketAnalysis} className="text-gray-800" />
                 </div>
             )}
@@ -1280,6 +1345,218 @@ function SettingsPage({ handleLogout }) {
                 <LogOut size={20} />
                 <span>{t('logout')}</span>
             </button>
+        </div>
+    );
+}
+
+// AI Farm Advisor Component — NVIDIA NIM Nemotron + 4 Agents + Voice Input
+function AIFarmAdvisor() {
+    const { t } = useContext(AppContext);
+    const [query, setQuery] = useState('');
+    const [response, setResponse] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [isListening, setIsListening] = useState(false);
+    const [voiceSupported] = useState(() => 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
+    const [agentOutputs, setAgentOutputs] = useState(null);
+    const recognitionRef = useRef(null);
+
+    const startVoiceInput = () => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) return;
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'en-IN';
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.onstart = () => setIsListening(true);
+        recognition.onend = () => setIsListening(false);
+        recognition.onerror = () => setIsListening(false);
+        recognition.onresult = (event) => {
+            setQuery(event.results[0][0].transcript);
+        };
+        recognitionRef.current = recognition;
+        recognition.start();
+    };
+
+    const stopVoiceInput = () => {
+        if (recognitionRef.current) recognitionRef.current.stop();
+        setIsListening(false);
+    };
+
+    const handleAdvisorQuery = async () => {
+        if (!query.trim()) { setError(new Error("Please enter or speak your question.")); return; }
+        setLoading(true);
+        setResponse('');
+        setError(null);
+        setAgentOutputs(null);
+
+        try {
+            const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
+         
+
+            // Agent 1: Disease
+            let diseaseInfo = '';
+            try {
+                const d = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: `A farmer asks: "${query}". Extract only crop disease or plant health aspects. Provide 2-sentence assessment. If not relevant, say "No disease concern identified."` }] }] })
+                });
+                const dData = await d.json();
+                diseaseInfo = dData.candidates?.[0]?.content?.parts?.[0]?.text || 'No disease data.';
+            } catch (e) { diseaseInfo = 'Disease agent unavailable.'; }
+
+            // Agent 2: Weather
+            let weatherInfo = '';
+            try {
+                const weatherKey = import.meta.env.VITE_WEATHER_API_KEY;
+                const locationMatch = query.match(/in\s+([A-Za-z\s]+)/i);
+                const location = locationMatch ? locationMatch[1].trim() : 'Karnataka';
+                const wRes = await fetch(`https://api.weatherapi.com/v1/forecast.json?key=${weatherKey}&q=${location}&days=3&aqi=no&alerts=no`);
+                if (wRes.ok) {
+                    const wData = await wRes.json();
+                    weatherInfo = `${wData.current.temp_c}°C, ${wData.current.condition.text}. Next 3 days: ${wData.forecast.forecastday.map(d => `${d.date}: ${d.day.condition.text}, ${d.day.avgtemp_c}°C`).join('; ')}`;
+                } else { weatherInfo = 'Weather data unavailable.'; }
+            } catch (e) { weatherInfo = 'Weather agent unavailable.'; }
+
+            // Agent 3: Market
+            let marketInfo = '';
+            try {
+                const agmarknetKey = import.meta.env.VITE_AGMARKNET_API_KEY;
+                const cpRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: `From this farmer query: "${query}", extract only the crop name as a single word. Return just the crop name, nothing else.` }] }] })
+                });
+                const cpData = await cpRes.json();
+                const extractedCrop = cpData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+                if (extractedCrop && extractedCrop.length < 20) {
+                    const mRes = await fetch(`https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?api-key=${agmarknetKey}&format=json&filters[commodity]=${encodeURIComponent(extractedCrop)}&limit=3`);
+                    if (mRes.ok) {
+                        const mData = await mRes.json();
+                        if (mData.records?.length > 0) {
+                            marketInfo = mData.records.map(r => `${r.market}: Modal ₹${r.modal_price}/quintal`).join(', ');
+                        }
+                    }
+                }
+                if (!marketInfo) marketInfo = 'Live mandi data unavailable for this crop.';
+            } catch (e) { marketInfo = 'Market agent unavailable.'; }
+
+            // Agent 4: Schemes
+            let schemesInfo = '';
+            try {
+                const sRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: `A farmer asks: "${query}". Which of these govt schemes is relevant: PM-KISAN, PMFBY, KCC, PM-KUSUM, e-NAM? List only relevant scheme names and one-line benefit. If none, say "No specific scheme applies."` }] }] })
+                });
+                const sData = await sRes.json();
+                schemesInfo = sData.candidates?.[0]?.content?.parts?.[0]?.text || 'No schemes data.';
+            } catch (e) { schemesInfo = 'Schemes agent unavailable.'; }
+
+            setAgentOutputs({ diseaseInfo, weatherInfo, marketInfo, schemesInfo });
+
+            // Agent 5: NVIDIA NIM Nemotron — Synthesis
+            const nimRes = await fetch('/api/nim-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: 'nvidia/llama-3.1-nemotron-70b-instruct',
+                    messages: [{
+                        role: 'user',
+                        content: `You are AgriGuard AI Farm Advisor powered by NVIDIA Nemotron. A farmer asked: "${query}"\n\nInputs from 4 agents:\nDISEASE AGENT: ${diseaseInfo}\nWEATHER AGENT: ${weatherInfo}\nMARKET AGENT: ${marketInfo}\nSCHEMES AGENT: ${schemesInfo}\n\nSynthesize into ONE clear response:\n1. Direct answer\n2. Key recommendation (what to do right now)\n3. Best opportunity or warning\n\nUnder 150 words. Simple, practical farming advisor tone.`
+                    }],
+                    max_tokens: 300,
+                    temperature: 0.6
+                })
+            });
+
+            if (!nimRes.ok) throw new Error(`NIM API error: ${await nimRes.text()}`);
+            const nimData = await nimRes.json();
+            const finalAnswer = nimData.choices?.[0]?.message?.content || '';
+            if (finalAnswer) { setResponse(finalAnswer); }
+            else { setError(new Error("No response from NVIDIA NIM.")); }
+
+        } catch (err) {
+            console.error("Advisor error:", err);
+            setError(new Error("Advisor failed: " + err.message));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const agentCards = [
+        { label: 'Disease Agent', key: 'diseaseInfo', color: 'red' },
+        { label: 'Weather Agent', key: 'weatherInfo', color: 'blue' },
+        { label: 'Market Agent', key: 'marketInfo', color: 'yellow' },
+        { label: 'Schemes Agent', key: 'schemesInfo', color: 'green' },
+    ];
+
+    return (
+        <div className="bg-white p-6 rounded-lg shadow-md border border-purple-200">
+            <div className="flex items-center space-x-3 mb-2">
+                <div className="bg-purple-600 p-2 rounded-lg">
+                    <Brain size={24} color="white" />
+                </div>
+                <div>
+                    <h2 className="text-2xl font-bold text-purple-700">AI Farm Advisor</h2>
+                    <p className="text-xs text-purple-400">Powered by NVIDIA Nemotron-70B + 4 Specialized Agents</p>
+                </div>
+            </div>
+            <p className="text-sm text-gray-500 mb-6">Ask any farming question — disease, market, weather, or schemes. Our AI agents analyze everything and give you one clear answer.</p>
+
+            <div className="flex flex-col space-y-3 mb-6">
+                <div className="relative">
+                    <textarea
+                        className="w-full p-3 pr-14 border border-purple-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none"
+                        rows="3"
+                        placeholder="e.g. My tomato leaves are turning yellow in Bangalore, should I sell now or wait?"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                    />
+                    {voiceSupported && (
+                        <button
+                            onClick={isListening ? stopVoiceInput : startVoiceInput}
+                            className={`absolute bottom-3 right-3 p-2 rounded-full transition-colors ${isListening ? 'bg-red-500 animate-pulse' : 'bg-purple-500 hover:bg-purple-600'} text-white`}
+                            title={isListening ? 'Stop' : 'Speak'}
+                        >
+                            <Mic size={18} />
+                        </button>
+                    )}
+                </div>
+                {isListening && <p className="text-red-500 text-sm text-center animate-pulse">🎤 Listening... speak now</p>}
+                <button
+                    onClick={handleAdvisorQuery}
+                    disabled={loading}
+                    className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 flex items-center justify-center space-x-2"
+                >
+                    {loading ? (
+                        <><div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div><span>Agents working...</span></>
+                    ) : (
+                        <span>Ask AI Farm Advisor</span>
+                    )}
+                </button>
+            </div>
+
+            {error && <p className="text-center text-red-600 mb-4">{error.message}</p>}
+
+            {agentOutputs && (
+                <div className="mb-4 grid grid-cols-2 gap-3">
+                    {agentCards.map(({ label, key, color }) => (
+                        <div key={label} className={`bg-${color}-50 border border-${color}-200 p-3 rounded-lg`}>
+                            <p className={`text-xs font-bold text-${color}-600 mb-1`}>{label} ✓</p>
+                            <p className="text-xs text-gray-600 line-clamp-3">{agentOutputs[key]}</p>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {response && (
+                <div className="bg-purple-50 border border-purple-200 p-6 rounded-lg">
+                    <div className="flex items-center space-x-2 mb-3">
+                        <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                        <p className="text-sm font-bold text-purple-700">NVIDIA Nemotron-70B Synthesis</p>
+                    </div>
+                    <TranslatableText text={response} className="text-gray-800 leading-relaxed" />
+                </div>
+            )}
         </div>
     );
 }
