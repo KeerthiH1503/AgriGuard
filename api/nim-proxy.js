@@ -8,6 +8,7 @@ export default async function handler(req, res) {
 
     try {
         const { messages } = req.body;
+        if (!messages) return res.status(400).json({ error: 'No messages in request body' });
 
         const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
             method: 'POST',
@@ -18,14 +19,16 @@ export default async function handler(req, res) {
             body: JSON.stringify({
                 model: 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
                 messages,
-                max_tokens: 300,
+                max_tokens: 1024,
                 temperature: 0.6,
-                stream: false
+                top_p: 0.95,
+                stream: false,
+                nvext: { thinking: { type: "disabled" } }
             })
         });
 
         const rawText = await response.text();
-        console.log('NIM raw response:', rawText);
+        console.log('NIM raw response:', rawText.substring(0, 300));
 
         let data;
         try {
@@ -34,8 +37,16 @@ export default async function handler(req, res) {
             return res.status(500).json({ error: 'Invalid JSON from NIM', raw: rawText });
         }
 
-        // Return full data so frontend can inspect
-        return res.status(200).json(data);
+        // Extract content safely
+        const content = data.choices?.[0]?.message?.content
+            || data.choices?.[0]?.message?.reasoning_content
+            || null;
+
+        if (!content) {
+            return res.status(200).json({ ...data, _extracted: null, _raw_choice: data.choices?.[0] });
+        }
+
+        return res.status(200).json({ ...data, _extracted: content });
 
     } catch (err) {
         console.error('Proxy error:', err);
