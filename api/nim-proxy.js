@@ -16,7 +16,7 @@ export default async function handler(req, res) {
                 'Authorization': `Bearer ${process.env.NIM_API_KEY}`
             },
             body: JSON.stringify({
-                model: 'nvidia/llama-3.1-nemotron-70b-instruct',
+                model: 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
                 messages,
                 max_tokens: 300,
                 temperature: 0.6,
