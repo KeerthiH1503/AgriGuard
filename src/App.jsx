@@ -1470,7 +1470,11 @@ function AIFarmAdvisor() {
 
             if (!nimRes.ok) throw new Error(`NIM API error: ${await nimRes.text()}`);
             const nimData = await nimRes.json();
-            const finalAnswer = nimData.choices?.[0]?.message?.content || '';
+            console.log('NIM full response:', JSON.stringify(nimData));
+const finalAnswer = nimData.choices?.[0]?.message?.content 
+    || nimData.choices?.[0]?.text 
+    || nimData.content 
+    || '';
             if (finalAnswer) { setResponse(finalAnswer); }
             else { setError(new Error("No response from NVIDIA NIM.")); }
 

@@ -19,13 +19,26 @@ export default async function handler(req, res) {
                 model: 'nvidia/llama-3.1-nemotron-70b-instruct',
                 messages,
                 max_tokens: 300,
-                temperature: 0.6
+                temperature: 0.6,
+                stream: false
             })
         });
 
-        const data = await response.json();
+        const rawText = await response.text();
+        console.log('NIM raw response:', rawText);
+
+        let data;
+        try {
+            data = JSON.parse(rawText);
+        } catch (e) {
+            return res.status(500).json({ error: 'Invalid JSON from NIM', raw: rawText });
+        }
+
+        // Return full data so frontend can inspect
         return res.status(200).json(data);
+
     } catch (err) {
+        console.error('Proxy error:', err);
         return res.status(500).json({ error: err.message });
     }
 }
