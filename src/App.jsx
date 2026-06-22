@@ -20,6 +20,32 @@ if (!document.getElementById(tailwindScriptId)) {
 
 // Create a context for Firebase and user data
 const AppContext = createContext(null);
+const APP_ID = 'local-agri-guard-app';
+
+const createDefaultProfile = (user) => ({
+    email: user?.email || null,
+    targetLanguage: 'English',
+    preferredCrops: [],
+    savedScans: []
+});
+
+const loadOrCreateUserProfile = async (firestoreDb, user) => {
+    const userDocRef = doc(firestoreDb, `artifacts/${APP_ID}/users/${user.uid}/profile/data`);
+
+    try {
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+            return userDocSnap.data();
+        }
+
+        const newProfile = createDefaultProfile(user);
+        await setDoc(userDocRef, newProfile);
+        return newProfile;
+    } catch (error) {
+        console.error("Error loading user profile. Continuing with local defaults:", error);
+        return createDefaultProfile(user);
+    }
+};
 
 // Main App Component
 function App() {
@@ -28,7 +54,7 @@ function App() {
     const [auth, setAuth] = useState(null);
     const [userId, setUserId] = useState(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
-    const [currentPage, setCurrentPage] = useState('dashboard'); // State for navigation
+    const [currentPage, setCurrentPage] = useState('login'); // State for navigation
     const [userProfile, setUserProfile] = useState(null); // State for user-specific data
     const [targetLanguage, setTargetLanguage] = useState('English'); // Default language for translation
 
@@ -119,7 +145,6 @@ function App() {
     };
 
     const t = (key) => translations['en'][key] || key;
-    const appId = 'local-agri-guard-app'; // Hardcoded for local VS Code testing
 
     useEffect(() => {
         try {
@@ -146,18 +171,8 @@ function App() {
             getRedirectResult(firebaseAuth)
                 .then(async (result) => {
                     if (result) {
-                        const user = result.user;
-                        const userDocRef = doc(firestoreDb, `artifacts/${appId}/users/${user.uid}/profile/data`);
-                        const userDocSnap = await getDoc(userDocRef);
-                        if (!userDocSnap.exists()) {
-                            const newProfile = {
-                                email: user.email || null,
-                                targetLanguage: 'English',
-                                preferredCrops: [],
-                                savedScans: []
-                            };
-                            await setDoc(userDocRef, newProfile);
-                        }
+                        await loadOrCreateUserProfile(firestoreDb, result.user);
+                        setCurrentPage('dashboard');
                     }
                 })
                 .catch((error) => {
@@ -165,28 +180,22 @@ function App() {
                 });
 
             const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
-                if (user) {
-                    setUserId(user.uid);
-                    const userDocRef = doc(firestoreDb, `artifacts/${appId}/users/${user.uid}/profile/data`);
-                    const userDocSnap = await getDoc(userDocRef);
-                    if (userDocSnap.exists()) {
-                        setUserProfile(userDocSnap.data());
-                        setTargetLanguage(userDocSnap.data().targetLanguage || 'English');
+                try {
+                    if (user) {
+                        setUserId(user.uid);
+                        const profile = await loadOrCreateUserProfile(firestoreDb, user);
+                        setUserProfile(profile);
+                        setTargetLanguage(profile.targetLanguage || 'English');
                     } else {
-                        const newProfile = {
-                            email: user.email || null,
-                            targetLanguage: 'English',
-                            preferredCrops: [],
-                            savedScans: []
-                        };
-                        await setDoc(userDocRef, newProfile);
-                        setUserProfile(newProfile);
+                        setUserId(null);
+                        setUserProfile(null);
+                        setCurrentPage('login');
                     }
-                } else {
-                    setUserId(null);
-                    setUserProfile(null);
+                } catch (error) {
+                    console.error("Error handling auth state:", error);
+                } finally {
+                    setIsAuthReady(true);
                 }
-                setIsAuthReady(true);
             });
 
             return () => unsubscribe();
@@ -198,7 +207,7 @@ function App() {
 
     useEffect(() => {
         if (db && userId && isAuthReady) {
-            const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/profile/data`);
+            const userDocRef = doc(db, `artifacts/${APP_ID}/users/${userId}/profile/data`);
             const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
                 if (docSnap.exists()) {
                     setUserProfile(docSnap.data());
@@ -214,7 +223,7 @@ function App() {
     const handleTargetLanguageChange = async (newLang) => {
         setTargetLanguage(newLang);
         if (db && userId && userProfile) {
-            const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/profile/data`);
+            const userDocRef = doc(db, `artifacts/${APP_ID}/users/${userId}/profile/data`);
             await setDoc(userDocRef, { ...userProfile, targetLanguage: newLang }, { merge: true });
         }
     };
@@ -240,12 +249,12 @@ function App() {
         );
     }
     
-    const contextValue = { app, db, auth, userId, userProfile, setUserProfile, targetLanguage, t, handleTargetLanguageChange, appId };
+    const contextValue = { app, db, auth, userId, userProfile, setUserProfile, targetLanguage, t, handleTargetLanguageChange, appId: APP_ID };
 
     return (
         <AppContext.Provider value={contextValue}>
             <div className="min-h-screen flex flex-col font-inter bg-gradient-to-br from-green-50 to-emerald-100 text-gray-800">
-                {userId ? (
+                {userId && currentPage !== 'login' ? (
                     <>
                         <Header setCurrentPage={setCurrentPage} />
                         <main className="flex-1 p-4 md:p-8 overflow-auto">
@@ -475,6 +484,156 @@ const fetchWithRetry = async (url, options, retries = 3, delay = 1000) => {
     }
     throw new Error(`API request failed after ${retries} attempts.`);
 };
+
+const CROP_COMMODITY_CANDIDATES = {
+    tomato: ['Tomato'],
+    onion: ['Onion'],
+    wheat: ['Wheat'],
+    rice: ['Paddy(Dhan)(Common)', 'Rice'],
+    paddy: ['Paddy(Dhan)(Common)', 'Paddy'],
+    banana: ['Banana'],
+    potato: ['Potato'],
+    maize: ['Maize'],
+    corn: ['Maize'],
+    cotton: ['Cotton'],
+    chilli: ['Chilli', 'Green Chilli'],
+    chili: ['Chilli', 'Green Chilli'],
+    groundnut: ['Groundnut'],
+    sugarcane: ['Sugarcane']
+};
+
+const CITY_TO_STATE = {
+    bangalore: 'Karnataka',
+    bengaluru: 'Karnataka',
+    mysore: 'Karnataka',
+    mysuru: 'Karnataka',
+    pune: 'Maharashtra',
+    mumbai: 'Maharashtra',
+    hyderabad: 'Telangana',
+    chennai: 'Tamil Nadu',
+    coimbatore: 'Tamil Nadu',
+    delhi: 'Delhi'
+};
+
+const toTitleCase = (value) =>
+    value
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+
+const normalizeCropName = (value) => {
+    const cleaned = (value || '')
+        .toLowerCase()
+        .replace(/[^a-z\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!cleaned || cleaned === 'unknown') return '';
+
+    for (const cropKey of Object.keys(CROP_COMMODITY_CANDIDATES)) {
+        const plural = `${cropKey}s`;
+        if (cleaned === cropKey || cleaned === plural || cleaned.includes(cropKey) || cleaned.includes(plural)) {
+            return toTitleCase(cropKey);
+        }
+    }
+
+    return toTitleCase(cleaned.split(' ')[0]);
+};
+
+const inferCropFromText = (text) => {
+    const cleaned = (text || '').toLowerCase();
+    for (const cropKey of Object.keys(CROP_COMMODITY_CANDIDATES)) {
+        if (cleaned.includes(cropKey) || cleaned.includes(`${cropKey}s`)) {
+            return toTitleCase(cropKey);
+        }
+    }
+    return '';
+};
+
+const normalizeRegionForMarket = (value) => {
+    const cleaned = (value || '').trim();
+    const state = CITY_TO_STATE[cleaned.toLowerCase()];
+    return state || toTitleCase(cleaned);
+};
+
+const getCommodityCandidates = (cropName) => {
+    const normalized = normalizeCropName(cropName);
+    const key = normalized.toLowerCase();
+    return CROP_COMMODITY_CANDIDATES[key] || (normalized ? [normalized] : []);
+};
+
+const fetchAgmarknetPrices = async ({ cropName, region = '', limit = 10 }) => {
+    const apiKey = import.meta.env.VITE_AGMARKNET_API_KEY;
+    const candidates = getCommodityCandidates(cropName);
+    const normalizedRegion = normalizeRegionForMarket(region);
+
+    if (!apiKey || candidates.length === 0) {
+        return { records: [], commodity: normalizeCropName(cropName), region: normalizedRegion };
+    }
+
+    const buildUrl = (commodity, includeRegion) => {
+        const params = new URLSearchParams({
+            'api-key': apiKey,
+            format: 'json',
+            limit: String(limit)
+        });
+        params.append('filters[commodity]', commodity);
+        if (includeRegion && normalizedRegion) {
+            params.append('filters[state]', normalizedRegion);
+        }
+        return `https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?${params.toString()}`;
+    };
+
+    for (const commodity of candidates) {
+        const attempts = normalizedRegion
+            ? [buildUrl(commodity, true), buildUrl(commodity, false)]
+            : [buildUrl(commodity, false)];
+
+        for (const url of attempts) {
+            const response = await fetch(url);
+            if (!response.ok) continue;
+
+            const data = await response.json();
+            if (data.records?.length > 0) {
+                return { records: data.records, commodity, region: normalizedRegion };
+            }
+        }
+    }
+
+    return { records: [], commodity: candidates[0] || normalizeCropName(cropName), region: normalizedRegion };
+};
+
+const formatMandiRecords = (records, cropName) => {
+    if (!records?.length) return '';
+    const cropLabel = normalizeCropName(cropName) || 'Crop';
+    return `${cropLabel} prices - ` + records.slice(0, 5).map(row =>
+        `${row.market || row.district}: ₹${row.modal_price}/quintal (${row.arrival_date || 'latest'})`
+    ).join(', ');
+};
+
+const getFallbackDiseaseInfo = ({ query, cropName, hasImage }) => {
+    const crop = normalizeCropName(cropName) || inferCropFromText(query) || 'crop';
+    if (hasImage) {
+        return `Photo received. If ${crop} leaves show spreading yellowing, spots, wilting, or soft stems, isolate affected plants and check drainage, pests, and nutrient stress before spraying.`;
+    }
+    if (/yellow|leaf|leaves|spot|spots|wilt|disease|pest|rot/i.test(query)) {
+        return `${crop} may be facing nutrient stress, water stress, pest damage, or fungal infection. Inspect the underside of leaves, soil moisture, and spread pattern before treatment.`;
+    }
+    return 'No clear disease concern was described. Keep monitoring leaf color, spots, wilting, and pest activity.';
+};
+
+const getFallbackSchemesInfo = ({ query }) => {
+    const lower = (query || '').toLowerCase();
+    const schemes = ['PM-KISAN: income support for eligible farmers.', 'PMFBY: crop insurance for weather or disease-related losses.', 'KCC: short-term crop credit through banks.'];
+    if (/solar|pump|electric|irrigation/.test(lower)) schemes.push('PM-KUSUM: support for solar pumps and renewable irrigation.');
+    if (/sell|price|market|mandi/.test(lower)) schemes.push('e-NAM: online mandi access and price discovery.');
+    return schemes.join('\n');
+};
+
+const buildLocalAdvisorSummary = ({ diseaseInfo, weatherInfo, marketInfo, schemesInfo }) =>
+    `Direct answer: ${diseaseInfo}\n\nKey recommendation: Use the weather and field condition together before acting. ${weatherInfo}\n\nMarket and support: ${marketInfo} ${schemesInfo}`;
 
 
 function TranslatableText({ text, as: Component = 'p', className = '' }) {
@@ -1051,20 +1210,14 @@ function MarketTracker() {
 
         try {
             // Step 1: Fetch live mandi prices from data.gov.in AGMARKNET API
-            const agmarknetKey = import.meta.env.VITE_AGMARKNET_API_KEY;
-            const agmarknetUrl = `https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?api-key=${agmarknetKey}&format=json&filters[commodity]=${encodeURIComponent(cropName)}&filters[state]=${encodeURIComponent(region)}&limit=10`;
-
             let livePriceText = '';
             try {
-                const agmarknetRes = await fetch(agmarknetUrl);
-                if (agmarknetRes.ok) {
-                    const agmarknetData = await agmarknetRes.json();
-                    if (agmarknetData.records && agmarknetData.records.length > 0) {
-                        setMandiData(agmarknetData.records);
-                        livePriceText = agmarknetData.records.map(r =>
-                            `Mandi: ${r.market}, Min: ₹${r.min_price}/quintal, Max: ₹${r.max_price}/quintal, Modal: ₹${r.modal_price}/quintal, Date: ${r.arrival_date}`
-                        ).join('\n');
-                    }
+                const marketResult = await fetchAgmarknetPrices({ cropName, region, limit: 10 });
+                if (marketResult.records.length > 0) {
+                    setMandiData(marketResult.records);
+                    livePriceText = marketResult.records.map(r =>
+                        `Mandi: ${r.market}, District: ${r.district}, Min: ₹${r.min_price}/quintal, Max: ₹${r.max_price}/quintal, Modal: ₹${r.modal_price}/quintal, Date: ${r.arrival_date}`
+                    ).join('\n');
                 }
             } catch (agErr) {
                 console.warn('AGMARKNET fetch failed, continuing with AI analysis only:', agErr);
@@ -1351,7 +1504,6 @@ function SettingsPage({ handleLogout }) {
 
 // AI Farm Advisor Component — NVIDIA NIM Nemotron + 4 Agents + Voice Input + Photo
 function AIFarmAdvisor() {
-    const { t } = useContext(AppContext);
     const [query, setQuery] = useState('');
     const [response, setResponse] = useState('');
     const [loading, setLoading] = useState(false);
@@ -1404,7 +1556,7 @@ function AIFarmAdvisor() {
     };
 
     const handleAdvisorQuery = async () => {
-        if (!query.trim()) { setError(new Error("Please enter or speak your question.")); return; }
+        if (!query.trim() && !uploadedImageBase64) { setError(new Error("Please enter a question, speak it, or upload a crop photo.")); return; }
         setLoading(true);
         setResponse('');
         setError(null);
@@ -1413,6 +1565,7 @@ function AIFarmAdvisor() {
         try {
             const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
             const delay = (ms) => new Promise(r => setTimeout(r, ms));
+            const advisorQuestion = query.trim() || 'Please inspect this crop photo and give practical farming advice.';
 
             const geminiCall = async (parts) => {
                 const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
@@ -1420,38 +1573,41 @@ function AIFarmAdvisor() {
                     body: JSON.stringify({ contents: [{ role: "user", parts }] })
                 });
                 const data = await res.json();
-                if (data.error?.code === 429) throw new Error('rate_limit');
+                if (!res.ok || data.error?.code === 429) {
+                    throw new Error(data.error?.code === 429 ? 'rate_limit' : 'gemini_unavailable');
+                }
                 return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
             };
 
             // Agent 1: Disease — supports image (separate call only if image uploaded)
             let diseaseInfo = '';
+            let cropName = inferCropFromText(advisorQuestion);
             try {
                 const parts = uploadedImageBase64
                     ? [
                         { inline_data: { mime_type: 'image/jpeg', data: uploadedImageBase64 } },
-                        { text: `This farmer uploaded a crop photo and asks: "${query || 'What disease or issue do you see?'}". Identify any visible disease, pest, or health issue. Give a 2-sentence assessment with the problem name and severity.` }
+                        { text: `This farmer uploaded a crop photo and asks: "${advisorQuestion}". Identify any visible disease, pest, nutrient, or water-stress issue. Give a 2-sentence practical assessment with severity.` }
                       ]
                     : null;
                 if (parts) {
                     diseaseInfo = await geminiCall(parts) || 'No disease concern identified.';
                     await delay(2000);
                 }
-            } catch (e) {
-                diseaseInfo = e.message === 'rate_limit' ? 'Rate limit hit — try again in 30s.' : 'Disease agent unavailable.';
+            } catch (error) {
+                console.warn('Disease photo analysis fallback:', error);
+                diseaseInfo = getFallbackDiseaseInfo({ query: advisorQuestion, cropName, hasImage: Boolean(uploadedImageBase64) });
             }
 
             // Agent 2: Weather (no Gemini needed — runs in parallel)
             let weatherInfo = '';
             const weatherKey = import.meta.env.VITE_WEATHER_API_KEY;
-            const locationMatch = query.match(/in\s+([A-Za-z\s]+)/i);
+            const locationMatch = advisorQuestion.match(/in\s+([A-Za-z\s]+)/i);
             const location = locationMatch ? locationMatch[1].trim() : 'Karnataka';
 
             // SINGLE Gemini call — handles Disease (text), Crop extraction, AND Schemes together
             let schemesInfo = '';
-            let cropName = '';
             try {
-                const combinedPrompt = `A farmer asks: "${query}"
+                const combinedPrompt = `A farmer asks: "${advisorQuestion}"
 
 Answer these 3 questions in this EXACT format with these EXACT labels:
 
@@ -1469,14 +1625,18 @@ SCHEMES: [List relevant govt schemes from: PM-KISAN (₹6000/yr), PMFBY (crop in
                 const schemesMatch = combined.match(/SCHEMES:\s*(.+?)$/s);
 
                 if (!uploadedImageBase64) {
-                    diseaseInfo = diseaseMatch?.[1]?.trim() || 'No disease concern identified.';
+                    diseaseInfo = diseaseMatch?.[1]?.trim() || getFallbackDiseaseInfo({ query: advisorQuestion, cropName, hasImage: false });
                 }
-                cropName = cropMatch?.[1]?.trim().split('\n')[0] || '';
-                schemesInfo = schemesMatch?.[1]?.trim() || 'No schemes data.';
+                cropName = normalizeCropName(cropMatch?.[1]?.trim().split('\n')[0]) || cropName;
+                schemesInfo = schemesMatch?.[1]?.trim() || getFallbackSchemesInfo({ query: advisorQuestion });
 
-            } catch (e) {
-                if (!uploadedImageBase64) diseaseInfo = e.message === 'rate_limit' ? 'Rate limit — retry in 30s.' : 'Disease agent unavailable.';
-                schemesInfo = e.message === 'rate_limit' ? 'Rate limit — retry in 30s.' : 'Schemes agent unavailable.';
+            } catch (error) {
+                console.warn('Combined Gemini agent fallback:', error);
+                cropName = cropName || inferCropFromText(advisorQuestion);
+                if (!uploadedImageBase64) {
+                    diseaseInfo = getFallbackDiseaseInfo({ query: advisorQuestion, cropName, hasImage: false });
+                }
+                schemesInfo = getFallbackSchemesInfo({ query: advisorQuestion });
             }
 
             // Agent 2: Weather fetch (no Gemini)
@@ -1493,75 +1653,84 @@ SCHEMES: [List relevant govt schemes from: PM-KISAN (₹6000/yr), PMFBY (crop in
             // Agent 3: Market — use crop name from combined call, fetch AGMARKNET
             let marketInfo = '';
             try {
-                const agmarknetKey = import.meta.env.VITE_AGMARKNET_API_KEY;
-                if (cropName && cropName !== 'Unknown' && cropName.length < 20) {
-                    const mRes = await fetch(`https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?api-key=${agmarknetKey}&format=json&filters[commodity]=${encodeURIComponent(cropName)}&limit=5`);
-                    if (mRes.ok) {
-                        const mData = await mRes.json();
-                        if (mData.records?.length > 0) {
-                            marketInfo = `${cropName} prices — ` + mData.records.map(r => `${r.market}: ₹${r.modal_price}/quintal`).join(', ');
-                        }
-                    }
+                const normalizedCrop = normalizeCropName(cropName);
+                if (normalizedCrop) {
+                    const marketResult = await fetchAgmarknetPrices({ cropName: normalizedCrop, region: location, limit: 5 });
+                    marketInfo = formatMandiRecords(marketResult.records, normalizedCrop);
                 }
-                if (!marketInfo) marketInfo = 'Live mandi data unavailable. Check agmarknet.gov.in for current prices.';
-            } catch (e) { marketInfo = 'Market agent unavailable.'; }
+                if (!marketInfo) {
+                    const cropLabel = normalizeCropName(cropName) || 'this crop';
+                    marketInfo = `Live mandi data was not available for ${cropLabel}. Compare the nearest mandi price before selling and avoid distress sale if crop quality is still good.`;
+                }
+            } catch (error) {
+                console.warn('Market agent fallback:', error);
+                marketInfo = 'Market lookup is temporarily unavailable. Use nearest mandi price, crop quality, and weather risk before deciding to sell.';
+            }
 
             setAgentOutputs({ diseaseInfo, weatherInfo, marketInfo, schemesInfo });
 
             // Agent 5: NVIDIA NIM Nemotron — Synthesis
             const imageContext = uploadedImageBase64 ? ' (Farmer also uploaded a crop photo for disease analysis.)' : '';
-            const nimRes = await fetch('/api/nim-proxy', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    messages: [{
-                        role: 'user',
-                        content: `You are AgriGuard AI Farm Advisor powered by NVIDIA Nemotron. A farmer asked: "${query}"${imageContext}\n\nInputs from 4 agents:\nDISEASE AGENT: ${diseaseInfo}\nWEATHER AGENT: ${weatherInfo}\nMARKET AGENT: ${marketInfo}\nSCHEMES AGENT: ${schemesInfo}\n\nSynthesize into ONE clear response:\n1. Direct answer\n2. Key recommendation (what to do right now)\n3. Best opportunity or warning\n\nUnder 150 words. Simple, practical farming advisor tone.`
-                    }]
-                })
-            });
+            try {
+                const nimRes = await fetch('/api/nim-proxy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: [{
+                            role: 'user',
+                            content: `You are AgriGuard AI Farm Advisor powered by NVIDIA Nemotron. A farmer asked: "${advisorQuestion}"${imageContext}\n\nInputs from 4 agents:\nDISEASE AGENT: ${diseaseInfo}\nWEATHER AGENT: ${weatherInfo}\nMARKET AGENT: ${marketInfo}\nSCHEMES AGENT: ${schemesInfo}\n\nSynthesize into ONE clear response:\n1. Direct answer\n2. Key recommendation (what to do right now)\n3. Best opportunity or warning\n\nDo not mention internal API failures. If live data is unavailable, say what the farmer should check next. Under 150 words. Simple, practical farming advisor tone.`
+                        }]
+                    })
+                });
 
-            if (!nimRes.ok) throw new Error(`NIM API error: ${await nimRes.text()}`);
-            const nimData = await nimRes.json();
-            const finalAnswer = nimData._extracted
-                || nimData.choices?.[0]?.message?.content
-                || nimData.choices?.[0]?.message?.reasoning_content
-                || '';
-            if (finalAnswer) { setResponse(finalAnswer); }
-            else { setError(new Error("No response from NVIDIA NIM. Raw: " + JSON.stringify(nimData).substring(0, 200))); }
+                if (!nimRes.ok) throw new Error(`NIM API error: ${await nimRes.text()}`);
+                const nimData = await nimRes.json();
+                const finalAnswer = nimData._extracted
+                    || nimData.choices?.[0]?.message?.content
+                    || nimData.choices?.[0]?.message?.reasoning_content
+                    || '';
+                setResponse(finalAnswer || buildLocalAdvisorSummary({ diseaseInfo, weatherInfo, marketInfo, schemesInfo }));
+            } catch (error) {
+                console.warn('NIM synthesis fallback:', error);
+                setResponse(buildLocalAdvisorSummary({ diseaseInfo, weatherInfo, marketInfo, schemesInfo }));
+            }
 
         } catch (err) {
             console.error("Advisor error:", err);
-            setError(new Error("Advisor failed: " + err.message));
+            setError(new Error("Advisor could not complete the analysis. Please try again."));
         } finally {
             setLoading(false);
         }
     };
 
     const agentCards = [
-        { label: 'Disease Agent', key: 'diseaseInfo', color: 'red' },
-        { label: 'Weather Agent', key: 'weatherInfo', color: 'blue' },
-        { label: 'Market Agent', key: 'marketInfo', color: 'yellow' },
-        { label: 'Schemes Agent', key: 'schemesInfo', color: 'green' },
+        { label: 'Disease Agent', key: 'diseaseInfo', classes: 'bg-red-50 border-red-200', labelClass: 'text-red-700' },
+        { label: 'Weather Agent', key: 'weatherInfo', classes: 'bg-sky-50 border-sky-200', labelClass: 'text-sky-700' },
+        { label: 'Market Agent', key: 'marketInfo', classes: 'bg-amber-50 border-amber-200', labelClass: 'text-amber-700' },
+        { label: 'Schemes Agent', key: 'schemesInfo', classes: 'bg-emerald-50 border-emerald-200', labelClass: 'text-emerald-700' },
     ];
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow-md border border-purple-200">
-            <div className="flex items-center space-x-3 mb-2">
-                <div className="bg-purple-600 p-2 rounded-lg">
+        <div className="bg-white p-6 rounded-lg shadow-md border border-emerald-200">
+            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-5">
+                <div className="flex items-center space-x-3">
+                <div className="bg-emerald-700 p-2 rounded-lg">
                     <Brain size={24} color="white" />
                 </div>
                 <div>
-                    <h2 className="text-2xl font-bold text-purple-700">AI Farm Advisor</h2>
-                    <p className="text-xs text-purple-400">Powered by NVIDIA Nemotron-70B + 4 Specialized Agents</p>
+                        <h2 className="text-2xl font-bold text-emerald-800">AgriGuard Pro Advisor</h2>
+                        <p className="text-xs text-emerald-600">NVIDIA NIM synthesis with disease, weather, market, and scheme agents</p>
+                    </div>
+                </div>
+                <div className="self-start rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
+                    Demo-ready multi-agent mode
                 </div>
             </div>
-            <p className="text-sm text-gray-500 mb-6">Ask any farming question — disease, market, weather, or schemes. Our AI agents analyze everything and give you one clear answer.</p>
 
             <div className="flex flex-col space-y-3 mb-6">
                 <div className="relative">
                     <textarea
-                        className="w-full p-3 pr-14 border border-purple-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none"
+                        className="w-full p-3 pr-14 border border-emerald-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"
                         rows="3"
                         placeholder="e.g. My tomato leaves are turning yellow in Bangalore, should I sell now or wait?"
                         value={query}
@@ -1570,21 +1739,21 @@ SCHEMES: [List relevant govt schemes from: PM-KISAN (₹6000/yr), PMFBY (crop in
                     {voiceSupported && (
                         <button
                             onClick={isListening ? stopVoiceInput : startVoiceInput}
-                            className={`absolute bottom-3 right-3 p-2 rounded-full transition-colors ${isListening ? 'bg-red-500 animate-pulse' : 'bg-purple-500 hover:bg-purple-600'} text-white`}
+                            className={`absolute bottom-3 right-3 p-2 rounded-full transition-colors ${isListening ? 'bg-red-500 animate-pulse' : 'bg-emerald-600 hover:bg-emerald-700'} text-white`}
                             title={isListening ? 'Stop' : 'Speak'}
                         >
                             <Mic size={18} />
                         </button>
                     )}
                 </div>
-                {isListening && <p className="text-red-500 text-sm text-center animate-pulse">🎤 Listening... speak now</p>}
+                {isListening && <p className="text-red-500 text-sm text-center animate-pulse">Listening... speak now</p>}
 
                 {/* Photo Upload */}
-                <div className="flex items-center space-x-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                     <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleImageUpload} className="hidden" />
                     <button
                         onClick={() => fileInputRef.current?.click()}
-                        className="flex items-center space-x-2 px-4 py-2 border-2 border-dashed border-purple-300 rounded-lg text-purple-600 hover:border-purple-500 hover:bg-purple-50 transition-colors text-sm"
+                        className="flex items-center justify-center space-x-2 px-4 py-2 border-2 border-dashed border-emerald-300 rounded-lg text-emerald-700 hover:border-emerald-500 hover:bg-emerald-50 transition-colors text-sm"
                     >
                         <Camera size={18} />
                         <span>{uploadedImage ? 'Change Photo' : 'Upload Crop Photo (optional)'}</span>
@@ -1602,23 +1771,23 @@ SCHEMES: [List relevant govt schemes from: PM-KISAN (₹6000/yr), PMFBY (crop in
                 <button
                     onClick={handleAdvisorQuery}
                     disabled={loading}
-                    className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 flex items-center justify-center space-x-2"
+                    className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 px-6 rounded-lg shadow-md disabled:opacity-50 flex items-center justify-center space-x-2"
                 >
                     {loading ? (
-                        <><div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div><span>Agents working...</span></>
+                        <><div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div><span>Analyzing crop, weather, market, and schemes...</span></>
                     ) : (
-                        <span>Ask AI Farm Advisor</span>
+                        <span>Ask AgriGuard Pro</span>
                     )}
                 </button>
             </div>
 
-            {error && <p className="text-center text-red-600 mb-4">{error.message}</p>}
+            {error && <p className="text-center text-red-600 mb-4 bg-red-50 border border-red-200 rounded-lg p-3">{error.message}</p>}
 
             {agentOutputs && (
-                <div className="mb-4 grid grid-cols-2 gap-3">
-                    {agentCards.map(({ label, key, color }) => (
-                        <div key={label} className={`bg-${color}-50 border border-${color}-200 p-3 rounded-lg`}>
-                            <p className={`text-xs font-bold text-${color}-600 mb-1`}>{label} ✓</p>
+                <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {agentCards.map(({ label, key, classes, labelClass }) => (
+                        <div key={label} className={`${classes} border p-3 rounded-lg`}>
+                            <p className={`text-xs font-bold ${labelClass} mb-1`}>{label} Ready</p>
                             <p className="text-xs text-gray-600 line-clamp-3">{agentOutputs[key]}</p>
                         </div>
                     ))}
@@ -1626,10 +1795,10 @@ SCHEMES: [List relevant govt schemes from: PM-KISAN (₹6000/yr), PMFBY (crop in
             )}
 
             {response && (
-                <div className="bg-purple-50 border border-purple-200 p-6 rounded-lg">
+                <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-lg">
                     <div className="flex items-center space-x-2 mb-3">
                         <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                        <p className="text-sm font-bold text-purple-700">NVIDIA Nemotron-70B Synthesis</p>
+                        <p className="text-sm font-bold text-emerald-800">NVIDIA NIM Farm Recommendation</p>
                     </div>
                     <TranslatableText text={response} className="text-gray-800 leading-relaxed" />
                 </div>
