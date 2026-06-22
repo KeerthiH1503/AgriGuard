@@ -1800,9 +1800,7 @@ SCHEMES: [List relevant govt schemes from: PM-KISAN (₹6000/yr), PMFBY (crop in
                         <div className="w-3 h-3 bg-green-500 rounded-full"></div>
                         <p className="text-sm font-bold text-emerald-800">NVIDIA NIM Farm Recommendation</p>
                     </div>
-                    <div className="text-gray-800 leading-relaxed whitespace-pre-wrap">
-    {response.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1')}
-</div>
+                    <TranslatableText text={response} className="text-gray-800 leading-relaxed" />
                 </div>
             )}
         </div>
