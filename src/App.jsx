@@ -682,7 +682,7 @@ function TranslatableText({ text, as: Component = 'p', className = '' }) {
     return (
         <div className="translatable-container relative group pr-12">
             <Component className={`whitespace-pre-wrap ${className}`}>
-                {translatedText || text}
+                {(translatedText || text).replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1')}
             </Component>
             <div className="absolute top-0 right-0 flex items-start space-x-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                 {translatedText && (
