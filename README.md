@@ -1,62 +1,105 @@
-<<<<<<< HEAD
-# React + Vite
-
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
-
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
-=======
-# AgriGuard
-An AI-powered web application that helps farmers with crop disease detection, market analysis, and personalised guidance. Built with Firebase and Gemini.
 # 🌾 AgriGuard — AI-Powered Farming Assistant
 
 ![React](https://img.shields.io/badge/React.js-20232A?style=flat&logo=react&logoColor=61DAFB)
 ![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=flat&logo=firebase&logoColor=black)
 ![Gemini](https://img.shields.io/badge/Gemini_AI-4285F4?style=flat&logo=google&logoColor=white)
+![NVIDIA](https://img.shields.io/badge/NVIDIA_NIM-76B900?style=flat&logo=nvidia&logoColor=white)
 ![TailwindCSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=flat&logo=tailwind-css&logoColor=white)
+![Vercel](https://img.shields.io/badge/Vercel-000000?style=flat&logo=vercel&logoColor=white)
 
-> An AI-powered web application that empowers farmers with crop disease detection, smart weather forecasting, market insights, and personalised farming guidance — all accessible in their native language.
+> An AI-powered farming assistant for rural Indian farmers — crop disease detection, live mandi prices, hyperlocal weather, government schemes, and an NVIDIA-powered multi-agent advisor, all in one app.
+
+🔗 **Live Demo:** [agri-guard-steel.vercel.app](https://agri-guard-steel.vercel.app)
 
 ---
 
 ## ✨ Features
 
-### 🔬 AI Disease Detector (Computer Vision)
-- Upload or capture a leaf/plant photo using your device camera (WebRTC)
-- Image sent to **Gemini 2.5 Flash Vision AI** for multimodal analysis
-- Returns structured JSON: Disease Name · Symptoms · Root Cause · Treatment Options
+### 🤖 AI Farm Advisor — NVIDIA NIM + Multi-Agent Pipeline
+The flagship feature. Ask any farming question via text, voice, or photo upload. Four specialized agents run and feed into NVIDIA Nemotron for a single unified recommendation.
+
+- **Disease Agent** — Gemini Vision analyzes crop photo or text symptoms
+- **Weather Agent** — Live 3-day forecast from WeatherAPI.com
+- **Market Agent** — Real-time mandi prices from AGMARKNET (data.gov.in)
+- **Schemes Agent** — Relevant govt schemes matched to the query
+- **NVIDIA Nemotron-70B** synthesizes all 4 outputs into one actionable recommendation
+- Voice input via Web Speech API (en-IN locale, no API key needed)
+- Photo upload / camera capture for visual disease detection
+- One-click translation to Hindi, Kannada, Tamil, Telugu
+
+### 🔬 AI Disease Detector
+- Upload or capture a crop/leaf photo using device camera
+- Gemini 2.5 Flash Vision analyzes the image
+- Returns: Disease name · Symptoms · Root cause · Treatment options · Prevention tips
+- Works offline-first with low-connectivity optimization
 
 ### 🌦️ Smart Weather Forecaster
-- Fetches live 5-day forecast via **WeatherAPI.com**
-- Gemini AI interprets the data as an agricultural expert
-- Gives actionable advice e.g. *"Heavy rain Tuesday — delay pesticide application"*
+- Live 5-day forecast via WeatherAPI.com
+- Gemini interprets raw weather data as an agricultural expert
+- Actionable farming advice e.g. "Heavy rain Tuesday — delay pesticide spray"
+- Location-aware forecasting
 
-### 📈 Market Insights Tracker
-- Input any crop name + region
-- AI generates concise market analysis with price trends and key factors
+### 📈 Market Tracker — Live Mandi Prices
+- Real-time commodity prices from AGMARKNET API (data.gov.in)
+- Shows min / max / modal price per quintal across multiple mandis
+- Filter by crop name and state
+- Gemini AI market analysis on top of real price data
+- Selling recommendations based on current market trends
 
-### 🤖 Farming Guide & Planting Scheduler
-- AI chatbot for farming Q&A (ask anything about crops/soil/pests)
+### 🌱 Farming Guide & Planting Scheduler
+- AI chatbot for any farming Q&A (crops, soil, pests, fertilizers)
 - Personalized planting schedules from sowing to harvest
+- Seasonal crop recommendations
 
 ### 🏛️ Government Schemes Portal
-- Curated info on PM-KISAN, PMFBY, KCC and more
-- Direct links to official government portals
+- PM-KISAN · PMFBY · KCC · PM-KUSUM · e-NAM
+- Eligibility info and direct links to official portals
+- AI-powered scheme matching based on farmer's situation
 
-### 🌐 Universal AI Translator
-- One-click translation of all AI outputs into user's preferred regional language
-- Built using a custom `TranslatableText` React component + Gemini language API
-- Makes the app fully accessible to rural, non-English-speaking farmers
+### 🌐 Multilingual Support
+- One-click translation of all AI outputs
+- Supports Hindi, Kannada, Tamil, Telugu, Marathi
+- Custom `TranslatableText` React component with slide-to-translate UI
+- Powered by Gemini translation API
+- Makes the app accessible to non-English-speaking rural farmers
+
+### 🔐 Authentication
+- Email / Password login
+- Google OAuth
+- Anonymous (Guest) login
+- Firebase Authentication + Cloud Firestore for user data
+
+---
+
+## 🏗️ Architecture
+
+```
+Farmer Input (Text / Voice / Photo)
+            │
+            ▼
+    ┌─────────────────────────────────────┐
+    │          AI Farm Advisor            │
+    │                                     │
+    │  ┌──────────┐   ┌──────────┐       │
+    │  │ Disease  │   │ Weather  │       │
+    │  │  Agent   │   │  Agent   │       │
+    │  │ (Gemini) │   │(WeatherAPI)      │
+    │  └──────────┘   └──────────┘       │
+    │  ┌──────────┐   ┌──────────┐       │
+    │  │  Market  │   │ Schemes  │       │
+    │  │  Agent   │   │  Agent   │       │
+    │  │(AGMARKNET)   │ (Gemini) │       │
+    │  └──────────┘   └──────────┘       │
+    │               │                    │
+    │               ▼                    │
+    │   NVIDIA Nemotron-70B (NIM)        │
+    │   Synthesis & Recommendation       │
+    └─────────────────────────────────────┘
+            │
+            ▼
+    Unified Farmer Recommendation
+    (Multilingual via Gemini)
+```
 
 ---
 
@@ -64,56 +107,48 @@ An AI-powered web application that helps farmers with crop disease detection, ma
 
 | Layer | Technology |
 |---|---|
-| Frontend | React.js (SPA), Tailwind CSS, Lucide React, HTML5 WebRTC |
-| Backend (BaaS) | Google Firebase (Auth + Cloud Firestore) |
-| AI Engine | Google Gemini API (gemini-2.5-flash) — Vision + NLP + Translation |
+| Frontend | React.js (SPA), Tailwind CSS, Lucide React |
+| Auth + Database | Firebase Authentication + Cloud Firestore |
+| AI — Vision + NLP + Translation | Google Gemini 2.5 Flash |
+| AI — Multi-Agent Synthesis | NVIDIA NIM (llama-3.3-nemotron-super-49b-v1.5) |
+| Market Data | AGMARKNET API via data.gov.in |
 | Weather | WeatherAPI.com |
-| State Management | React Context API (AppContext) |
-| Resilience | Exponential Backoff retry (`fetchWithRetry`) |
+| Voice Input | Web Speech API (browser-native, no API key) |
+| Backend Proxy | Vercel Serverless Functions (Node.js) |
+| Deployment | Vercel |
+| Resilience | Exponential backoff retry (`fetchWithRetry`) |
 
 ---
 
 ## 🚀 Getting Started
 
-```bash
-git clone https://github.com/Keerthi-H/agriguard.git
-cd agriguard
-npm install
-npm run dev
-```
+
 
 Create a `.env` file in the root:
 
 ```env
 VITE_FIREBASE_API_KEY=your_firebase_key
+VITE_FIREBASE_AUTH_DOMAIN=your_auth_domain
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_storage_bucket
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
 VITE_GEMINI_API_KEY=your_gemini_key
 VITE_WEATHER_API_KEY=your_weatherapi_key
+VITE_AGMARKNET_API_KEY=your_data_gov_in_key
 ```
 
-
-
----
-
-## 🔐 Authentication
-
-Supports three login methods:
-- Email / Password
-- Google OAuth
-- Anonymous (Guest) login
-
----
-
-## 🏗️ Architecture Highlights
-
-- **Real-time sync** — Firebase `onSnapshot` updates the UI globally without page refresh
-- **Multimodal AI** — Combines Computer Vision (image) + NLP (text) in a single pipeline
-- **Resilient networking** — Exponential backoff retries for poor rural internet connections
-- **Contextual intelligence** — Weather isn't just displayed; it's interpreted for farming decisions
+For NVIDIA NIM — add to Vercel environment variables (server-side only, never expose in frontend):
+```
+NIM_API_KEY=your_nvidia_nim_key
+```
 
 ---
 
 ## 👩‍💻 Author
 
 **Keerthi H** · B.Tech CSE, CMR University, Bengaluru (2024–2028)
-📧 keerthih1503@gmail.com · [LinkedIn](https://www.linkedin.com/in/keerthi-h-a2b1aa32a)
->>>>>>> b21167a715bbfb111f17d9b80e88220c26fa6aab
+📧 keerthih1503@gmail.com · [LinkedIn](https://www.linkedin.com/in/keerthi-h-a2b1aa32a) · [Portfolio](https://keerthih.netlify.app)
+
+---
+
